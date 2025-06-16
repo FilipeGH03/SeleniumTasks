@@ -11,6 +11,7 @@ pip install selenium beautifulsoup4
 ```
 
 ### 2. Configure o ChromeDriver
+> Tem uma versão ja no repositorio mas confira se é a correta
 
 * Baixe o [ChromeDriver](https://sites.google.com/chromium.org/driver/) compatível com a sua versão do navegador Google Chrome
 * Coloque o executável do `chromedriver` na mesma pasta dos scripts ou adicione ao `PATH` do sistema
