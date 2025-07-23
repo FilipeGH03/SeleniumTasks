@@ -1,5 +1,3 @@
-### Incompleto ###
-
 import os
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -8,9 +6,9 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
-from selenium.webdriver.support.ui import Select
-import requests
-from bs4 import BeautifulSoup
+import tkinter as tk
+from tkinter import messagebox, scrolledtext, ttk
+from threading import Thread
 import time
 import csv
 import re
@@ -258,13 +256,23 @@ def extrair_tabelas_indicadores_com_secao(nome_pessoa):
 
         # Captura todos os blocos .grafico
         blocos = driver.find_elements(By.CSS_SELECTOR, "div.grafico")
-
+        print(f"Total de blocos encontrados: {len(blocos)}")
         for bloco in blocos:
-            # Título da seção
             try:
-                titulo_secao = bloco.find_element(By.TAG_NAME, "h2").text.strip()
-            except:
-                titulo_secao = "Seção Desconhecida"
+                # Scroll até o bloco para garantir que esteja visível
+                driver.execute_script("arguments[0].scrollIntoView(true);", bloco)
+                time.sleep(0.3)  # pequena pausa para garantir carregamento
+
+                # Título da seção
+                try:
+                    titulo_secao = bloco.find_element(By.TAG_NAME, "h2").text.strip()
+                except:
+                    titulo_secao = "Seção Desconhecida"
+
+                print(titulo_secao)  # ou qualquer outro processamento
+
+            except Exception as e:
+                print(f"Erro ao processar bloco: {e}")
 
             # Agora captura TODAS as tabelas dentro do bloco
             tabelas = bloco.find_elements(By.CSS_SELECTOR, "table")
@@ -279,13 +287,8 @@ def extrair_tabelas_indicadores_com_secao(nome_pessoa):
                             resultados.append([nome_pessoa, titulo_secao, descricao, total])
 
         # Salva CSV com tudo
-        with open("indicadores_producao_detalhado.csv", "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Nome", "Seção", "Categoria", "Total"])
-            writer.writerows(resultados)
-
-        print(f"{len(resultados)} registros com seções salvos em indicadores_producao_detalhado.csv")
-
+        print(f"{len(resultados)} registros com seções extraídos. Para o nome: {nome_pessoa}")
+        return resultados
     except Exception as e:
         print(f"Erro ao extrair tabelas com seções: {e}")
 
@@ -293,19 +296,96 @@ def extrair_tabelas_indicadores_com_secao(nome_pessoa):
         driver.switch_to.default_content()
 
 
+def make_csv(data, filename="produção.csv"):
+    with open(filename, mode="w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.writer(file)
+        
+        # Cabeçalho
+        writer.writerow(["Nome", "Categoria", "Tipo", "Quantidade"])
+        
+        # Escreve os dados
+        for group in data:
+            for row in group:
+                writer.writerow(row)
 
-os.system('cls' if os.name == 'nt' else 'clear')
-start()
-searchAll()
-insertName("Diogenes Dezen")
-click_search()
-click_first_result()
-click_indicadores_producao()
-selecionar_ano("2023")
-extrair_tabelas_indicadores("Diogenes Dezen")
-extrair_tabelas_indicadores_com_secao("Diogenes Dezen")
-# openLattes()
-# extrair_producao("Diogenes Dezen")
+    print(f"Arquivo '{filename}' gerado com sucesso!")
 
-input("Pressione Enter para continuar após marcar a caixa de seleção...")
+def search(nomes, ano="Todos",  update_progresso=None): 
+    resultados = []
+    total = len(nomes)
+    for i, nome in enumerate(nomes, 1):
+        os.system('cls' if os.name == 'nt' else 'clear')
+        start()
+        searchAll()
+        insertName(nome)
+        click_search()
+        click_first_result()
+        click_indicadores_producao()
+        selecionar_ano(ano)
+        resultados.append(extrair_tabelas_indicadores_com_secao(nome))
+        if update_progresso:
+            update_progresso(i, total)
+
+    make_csv(resultados)
+
+
+
+def iniciar_busca():
+    nomes_texto = entrada_nomes.get("1.0", tk.END).strip()
+    nomes = [nome.strip() for nome in nomes_texto.split("\n") if nome.strip()]
+    
+    if not nomes:
+        messagebox.showwarning("Aviso", "Insira ao menos um nome.")
+        return
+    
+    ano = ano_var.get()
+
+    status_label.config(text="Iniciando busca...")
+    btn_iniciar.config(state=tk.DISABLED)
+    progresso_bar["value"] = 0
+    progresso_bar["maximum"] = len(nomes)
+
+    def update_progresso(atual, total):
+        progresso_bar["value"] = atual
+        status_label.config(text=f"Processando {atual}/{total}...")
+
+    def tarefa():
+        try:
+            search(nomes, ano, update_progresso=update_progresso)
+            status_label.config(text="Busca finalizada com sucesso.")
+        except Exception as e:
+            messagebox.showerror("Erro", str(e))
+            status_label.config(text="Erro durante a busca.")
+        finally:
+            btn_iniciar.config(state=tk.NORMAL)
+
+    Thread(target=tarefa).start()
+
+# Cria a janela principal
+janela = tk.Tk()
+janela.title("Extrator CNPq - Produção Lattes")
+janela.geometry("500x500")
+
+tk.Label(janela, text="Digite os nomes (um por linha):").pack(pady=5)
+entrada_nomes = scrolledtext.ScrolledText(janela, width=60, height=10)
+entrada_nomes.pack()
+
+tk.Label(janela, text="Pesquisar as produções a partir do ano:").pack(pady=5)
+ano_var = tk.StringVar(value="Todos")
+anos_opcoes = ["Todos"] + [str(ano) for ano in range(2024, 2000, -1)]
+ano_menu = tk.OptionMenu(janela, ano_var, *anos_opcoes)
+ano_menu.pack()
+
+btn_iniciar = tk.Button(janela, text="Iniciar Extração", command=iniciar_busca)
+btn_iniciar.pack(pady=10)
+
+# Barra de progresso
+progresso_bar = ttk.Progressbar(janela, orient="horizontal", length=400, mode="determinate")
+progresso_bar.pack(pady=10)
+
+# Status
+status_label = tk.Label(janela, text="Aguardando...")
+status_label.pack()
+
+janela.mainloop()
 
