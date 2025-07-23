@@ -7,11 +7,13 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
 import requests
 from bs4 import BeautifulSoup
 import time
 import csv
 import re
+import unicodedata
 
 options = Options()
 options.add_argument("--start-maximized")  # Abre em tela cheia
@@ -124,14 +126,185 @@ def extrair_producao(nome):
     except Exception as e:
         print(f"Erro ao extrair produção: {e}")
 
+def click_indicadores_producao():
+    try:
+        # Entra no iframe do modal
+        iframe = wait.until(
+            EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal"))
+        )
+        driver.switch_to.frame(iframe)
+
+        # Rola para garantir que todos os links fiquem visíveis
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1)
+
+        # Captura todos os links do iframe
+        links = driver.find_elements(By.TAG_NAME, "a")
+
+        def normalize(text):
+            # Remove acentos e converte para maiúsculas para comparação flexível
+            return ''.join(
+                c for c in unicodedata.normalize('NFD', text)
+                if unicodedata.category(c) != 'Mn'
+            ).upper().strip()
+
+        alvo = None
+        for link in links:
+            if "INDICADORES DA PRODUCAO" in normalize(link.text):
+                alvo = link
+                break
+
+        if not alvo:
+            raise Exception("Link 'Indicadores da Produção' não encontrado!")
+
+        # Força clique via JS (evita erros de overlay)
+        driver.execute_script("arguments[0].click();", alvo)
+        print("Clique realizado em 'Indicadores da Produção'.")
+
+    except Exception as e:
+        print(f"Erro ao clicar em 'Indicadores da Produção': {e}")
+
+    finally:
+        driver.switch_to.default_content()  # volta ao contexto principal
+
+def selecionar_ano(ano="Todos"):
+    try:
+        iframe = wait.until(
+            EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal"))
+        )
+        driver.switch_to.frame(iframe)
+
+        select_element = wait.until(
+            EC.presence_of_element_located((By.TAG_NAME, "select"))
+        )
+        Select(select_element).select_by_visible_text(str(ano))
+        print(f"Ano '{ano}' selecionado com sucesso.")
+
+    except Exception as e:
+        print(f"Erro ao selecionar ano: {e}")
+
+    finally:
+        driver.switch_to.default_content()
+
+
+def extrair_tabelas_indicadores(nome_pessoa):
+    resultados = []
+    try:
+        # Troca para o iframe
+        iframe = wait.until(
+            EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal"))
+        )
+        driver.switch_to.frame(iframe)
+
+        # Espera os gráficos carregarem (sumir "carregando...")
+        wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "carregando-cont-indicadores")))
+
+        # Rola até o final para garantir que todas as tabelas aparecem
+        last_height = 0
+        while True:
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1)
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                break
+            last_height = new_height
+
+        # Coleta todas as tabelas (cada uma tem linhas <tr>)
+        tabelas = driver.find_elements(By.XPATH, "//table")
+        for tabela in tabelas:
+            linhas = tabela.find_elements(By.XPATH, ".//tr")
+            for linha in linhas:
+                colunas = linha.find_elements(By.XPATH, ".//td")
+                if len(colunas) >= 2:
+                    descricao = colunas[0].text.strip()
+                    total = colunas[-1].text.strip()
+                    if descricao and total:
+                        resultados.append([nome_pessoa, descricao, total])
+
+        # Salva tudo em CSV
+        with open("indicadores_producao.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Nome", "Categoria", "Total"])
+            writer.writerows(resultados)
+
+        print(f"{len(resultados)} registros extraídos e salvos em indicadores_producao.csv")
+
+    except Exception as e:
+        print(f"Erro ao extrair tabelas: {e}")
+
+    finally:
+        driver.switch_to.default_content()
+
+def extrair_tabelas_indicadores_com_secao(nome_pessoa):
+    resultados = []
+    try:
+        iframe = wait.until(
+            EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal"))
+        )
+        driver.switch_to.frame(iframe)
+
+        wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "carregando-cont-indicadores")))
+
+        # Faz scroll para garantir que tudo carregue
+        last_height = 0
+        while True:
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1)
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                break
+            last_height = new_height
+
+        # Captura todos os blocos .grafico
+        blocos = driver.find_elements(By.CSS_SELECTOR, "div.grafico")
+
+        for bloco in blocos:
+            # Título da seção
+            try:
+                titulo_secao = bloco.find_element(By.TAG_NAME, "h2").text.strip()
+            except:
+                titulo_secao = "Seção Desconhecida"
+
+            # Agora captura TODAS as tabelas dentro do bloco
+            tabelas = bloco.find_elements(By.CSS_SELECTOR, "table")
+            for tabela in tabelas:
+                linhas = tabela.find_elements(By.XPATH, ".//tr")
+                for linha in linhas:
+                    colunas = linha.find_elements(By.XPATH, ".//td")
+                    if len(colunas) >= 2:
+                        descricao = colunas[0].text.strip()
+                        total = colunas[-1].text.strip()
+                        if descricao and total:
+                            resultados.append([nome_pessoa, titulo_secao, descricao, total])
+
+        # Salva CSV com tudo
+        with open("indicadores_producao_detalhado.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Nome", "Seção", "Categoria", "Total"])
+            writer.writerows(resultados)
+
+        print(f"{len(resultados)} registros com seções salvos em indicadores_producao_detalhado.csv")
+
+    except Exception as e:
+        print(f"Erro ao extrair tabelas com seções: {e}")
+
+    finally:
+        driver.switch_to.default_content()
+
+
+
 os.system('cls' if os.name == 'nt' else 'clear')
 start()
 searchAll()
 insertName("Diogenes Dezen")
 click_search()
 click_first_result()
-openLattes()
-extrair_producao("Diogenes Dezen")
+click_indicadores_producao()
+selecionar_ano("2023")
+extrair_tabelas_indicadores("Diogenes Dezen")
+extrair_tabelas_indicadores_com_secao("Diogenes Dezen")
+# openLattes()
+# extrair_producao("Diogenes Dezen")
 
 input("Pressione Enter para continuar após marcar a caixa de seleção...")
 
