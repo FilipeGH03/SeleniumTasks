@@ -8,6 +8,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
+from selenium.webdriver.support.ui import Select
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -307,3 +308,4 @@ extrair_tabelas_indicadores_com_secao("Diogenes Dezen")
 # extrair_producao("Diogenes Dezen")
 
 input("Pressione Enter para continuar após marcar a caixa de seleção...")
+
