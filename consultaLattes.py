@@ -1,151 +1,125 @@
+# === IMPORTAÇÕES ===
 import os
+import re
+import csv
+import time
+import datetime
+import unicodedata
+import tkinter as tk
+from tkinter import messagebox, scrolledtext, ttk
+from threading import Thread
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import Select
-import tkinter as tk
-from tkinter import messagebox, scrolledtext, ttk
-from threading import Thread
-import time
-import csv
-import re
-import unicodedata
 
+# === CONFIGURAÇÃO DO NAVEGADOR ===
 options = Options()
-options.add_argument("--start-maximized")  # Abre em tela cheia
-# options.add_argument('--headless')
+options.add_argument("--start-maximized")
+# options.add_argument('--headless') # Descomente esta linha se quiser rodar em background
 driver = webdriver.Chrome(options=options)
 wait = WebDriverWait(driver, 20)
 
+# === FUNÇÕES DE NAVEGAÇÃO E INTERAÇÃO COM A PÁGINA DO CNPq ===
 
-def start():
-    # Acessa a página inicial do CNPq
+# Abre a página inicial do CNPq
+def open_cnpq_homepage():
     print("Acessando a página do CNPq...")
     driver.get("https://buscatextual.cnpq.br/buscatextual/busca.do?metodo=apresentar")
 
-def searchAll():
+# Marca o checkbox para buscar todos os currículos (sem filtros)
+def check_all_curricula():
     try:
-        # Clica no checkbox para buscar todos os currículos
         checkbox = wait.until(EC.element_to_be_clickable((By.ID, "buscarDemais")))
         checkbox.click()
         print("Checkbox 'Buscar todos os currículos' marcado.")
     except Exception as e:
         print(f"Erro ao marcar o checkbox: {e}")
 
-
-def insertName(name):
+# Insere um nome no campo de busca
+def enter_search_name(name):
     try:
-        # Localiza o campo de texto pelo novo ID e insere o nome
         campo_nome = wait.until(EC.presence_of_element_located((By.ID, "textoBusca")))
         campo_nome.clear()
         campo_nome.send_keys(name)
         print(f"Nome '{name}' inserido no campo de busca.")
     except Exception as e:
         print(f"Erro ao inserir nome: {e}")
-        
-def click_search():
+
+# Clica no botão de buscar
+def click_search_button():
     try:
-        # Clica no botão de busca (ID corrigido para 'botaoBuscaFiltros')
         botao_buscar = wait.until(EC.element_to_be_clickable((By.ID, "botaoBuscaFiltros")))
         botao_buscar.click()
         print("Botão de busca clicado.")
     except Exception as e:
         print(f"Erro ao clicar no botão de busca: {e}")
 
-def click_first_result():
+# Conta o número de resultados retornados pela busca
+def count_search_results():
     try:
-        # Aguarda o primeiro resultado aparecer e clica no link do nome
-        primeiro_resultado = wait.until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, "div.resultado ol li a"))
-        )
-        primeiro_resultado.click()
-        print("Primeiro resultado clicado.")
+        resultados = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.resultado ol li")))
+        return len(resultados)
     except Exception as e:
-        print(f"Erro ao clicar no primeiro resultado: {e}")        
+        print(f"Erro ao contar resultados: {e}")
+        return 0
 
-def openLattes():
+# Clica no primeiro resultado retornado pela busca
+def click_result_by_index(index=0):
+    try:
+        resultados = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.resultado ol li a")))
+        if index < 0 or index >= len(resultados):
+            print(f"Índice {index} fora do intervalo de resultados ({len(resultados)} encontrados).")
+            return True
+        resultado = resultados[index]
+        driver.execute_script("arguments[0].scrollIntoView(true);", resultado)
+        resultado.click()
+        print(f"Resultado {index + 1} clicado.")
+    except Exception as e:
+        print(f"Erro ao clicar no resultado {index + 1}: {e}")
+        return True
+
+# Abre o currículo detalhado via botão
+def open_lattes_cv():
     try:
         wait.until(EC.presence_of_element_located((By.CLASS_NAME, "moldal-interna")))
         time.sleep(1)
         botao_abrir = wait.until(EC.element_to_be_clickable((By.ID, "idbtnabrircurriculo")))
-
         driver.execute_script("arguments[0].scrollIntoView(true);", botao_abrir)
         time.sleep(0.5)
         botao_abrir.click()
-
         print("Currículo aberto via fluxo normal.")
     except Exception as e:
         print(f"Erro ao abrir currículo: {e}")
 
-def extrair_producao(nome):
+# Fecha o modal de currículo
+def close_modal():
     try:
-        # Espera o currículo carregar e tenta encontrar os artigos
-        # Tenta encontrar artigos usando diferentes seletores
-        artigos_elementos = []
-        try:
-            wait.until(EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'artigos-completos')]")))
-            artigos_elementos = driver.find_elements(By.XPATH, "//div[contains(@class, 'artigo-completo')]")
-        except Exception:
-            try:
-                artigos_elementos = driver.find_elements(By.XPATH, "//div[contains(@class, 'artigo')]")
-            except Exception:
-                pass
-
-        print(f"Artigos encontrados: {len(artigos_elementos)}")
-        # Exemplo: buscar todos os elementos <span> que contenham textos relevantes em toda a página
-        spans_relevantes = driver.find_elements(By.XPATH, "//span[contains(text(), '')]")
-        print(f"Total de spans encontrados na página: {len(spans_relevantes)}")
-        # Você pode filtrar ou processar esses elementos conforme necessário
-        for span in spans_relevantes:
-            texto = span.text.strip()
-            if texto:
-                print(f"Span encontrado: {texto}")
-        resultados = []
-        for artigo_elem in artigos_elementos:
-            spans = artigo_elem.find_elements(By.TAG_NAME, "span")
-            texto_spans = " ; ".join([span.text for span in spans if span.text.strip()])
-            texto_principal = artigo_elem.text
-            texto_completo = f"{texto_spans} ; {texto_principal}" if texto_spans else texto_principal
-
-            if nome.split()[0].upper() in texto_completo.upper():
-                resultados.append([nome, texto_completo])
-
-        # Salva os resultados em um arquivo CSV
-        with open("producao_lattes.csv", "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Nome", "Artigo"])
-            if resultados:
-                writer.writerows(resultados)
-                print(f"{len(resultados)} artigos salvos em producao_lattes.csv")
-            else:
-                print("Nenhum artigo encontrado para este nome.")
+        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "moldal-interna")))
+        time.sleep(1)
+        botao_fechar = wait.until(EC.element_to_be_clickable((By.ID, "idbtnfechar")))
+        driver.execute_script("arguments[0].scrollIntoView(true);", botao_fechar)
+        time.sleep(0.5)
+        botao_fechar.click()
+        print("modal fechado.")
     except Exception as e:
-        print(f"Erro ao extrair produção: {e}")
+        print(f"Erro ao abrir currículo: {e}")
 
-def click_indicadores_producao():
+# === FUNÇÕES PARA ACESSO ÀS SEÇÕES DE PRODUÇÃO ===
+
+# Clica no link "Indicadores da Produção"
+def click_production_indicators():
     try:
-        # Entra no iframe do modal
-        iframe = wait.until(
-            EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal"))
-        )
+        iframe = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal")))
         driver.switch_to.frame(iframe)
-
-        # Rola para garantir que todos os links fiquem visíveis
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1)
-
-        # Captura todos os links do iframe
         links = driver.find_elements(By.TAG_NAME, "a")
 
         def normalize(text):
-            # Remove acentos e converte para maiúsculas para comparação flexível
-            return ''.join(
-                c for c in unicodedata.normalize('NFD', text)
-                if unicodedata.category(c) != 'Mn'
-            ).upper().strip()
+            return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn').upper().strip()
 
         alvo = None
         for link in links:
@@ -156,49 +130,107 @@ def click_indicadores_producao():
         if not alvo:
             raise Exception("Link 'Indicadores da Produção' não encontrado!")
 
-        # Força clique via JS (evita erros de overlay)
         driver.execute_script("arguments[0].click();", alvo)
         print("Clique realizado em 'Indicadores da Produção'.")
-
     except Exception as e:
         print(f"Erro ao clicar em 'Indicadores da Produção': {e}")
-
     finally:
-        driver.switch_to.default_content()  # volta ao contexto principal
+        driver.switch_to.default_content()
 
-def selecionar_ano(ano="Todos"):
+# Clica no link "Diretório de grupos de pesquisa"
+def click_search_groups():
     try:
-        iframe = wait.until(
-            EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal"))
-        )
+        iframe = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal")))
+        driver.switch_to.frame(iframe)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1)
+        links = driver.find_elements(By.TAG_NAME, "a")
+
+        def normalize(text):
+            return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn').upper().strip()
+
+        alvo = None
+        for link in links:
+            if "GRUPOS DE PESQUISA" in normalize(link.text):
+                alvo = link
+                break
+
+        if not alvo:
+            raise Exception("Link 'Diretório de grupos de pesquisa' não encontrado!")
+
+        driver.execute_script("arguments[0].click();", alvo)
+        print("Clique realizado em 'Diretório de grupos de pesquisa'.")
+    except Exception as e:
+        print(f"Erro ao clicar em 'Diretório de grupos de pesquisa': {e}")
+    finally:
+        driver.switch_to.default_content()
+
+#Pega a titulação do currículo
+def get_curriculum_title():
+    wait = WebDriverWait(driver, 50)
+    try:
+        # Espera a nova aba abrir
+        wait.until(lambda driver: len(driver.window_handles) > 1)
+        nova_aba = driver.window_handles[1]
+        driver.switch_to.window(nova_aba)
+
+        controls_list = wait.until(lambda driver: driver.find_elements(By.CLASS_NAME, "controls"))
+        if len(controls_list) >= 2:
+            title = controls_list[1].text.strip()
+        else:
+            title = ""
+        print(f"Titulação encontrada: {title}"),
+        driver.quit()
+        return title
+    except Exception as e:
+        print(f"Erro ao obter titulação: {e}")
+        driver.quit()
+        return "Erro ao obter titulação"
+
+
+# Seleciona o ano desejado no filtro (ou "Todos")
+def select_year_filter(year="Todos"):
+    try:
+        iframe = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal")))
         driver.switch_to.frame(iframe)
 
-        select_element = wait.until(
-            EC.presence_of_element_located((By.TAG_NAME, "select"))
-        )
-        Select(select_element).select_by_visible_text(str(ano))
-        print(f"Ano '{ano}' selecionado com sucesso.")
+        if driver.find_elements(By.XPATH, "//b[contains(text(), 'Não existem produções cadastradas para este currículo')]"):
+            driver.switch_to.default_content()
+            return 1
 
+        select_element = wait.until(EC.presence_of_element_located((By.TAG_NAME, "select")))
+        options = [opt.text.strip() for opt in select_element.find_elements(By.TAG_NAME, "option")]
+
+        if str(year) not in options:
+            raise ValueError(f"Ano '{year}' não está entre as opções disponíveis: {options}")
+
+        Select(select_element).select_by_visible_text(str(year))
+        print(f"Ano '{year}' selecionado com sucesso.")
     except Exception as e:
         print(f"Erro ao selecionar ano: {e}")
-
+        if str(year).isdigit() and int(year) + 1 <= datetime.datetime.now().year:
+            print(f"Selecionando ano {int(year) + 1} por padrão.")
+            driver.switch_to.default_content()
+            return select_year_filter(str(int(year) + 1))
+        else:
+            driver.switch_to.default_content()
+            return 2
     finally:
-        driver.switch_to.default_content()
+        try:
+            driver.switch_to.default_content()
+        except:
+            pass
 
+# === FUNÇÃO PARA EXTRAÇÃO DOS DADOS DE PRODUÇÃO ===
 
-def extrair_tabelas_indicadores(nome_pessoa):
-    resultados = []
+# Extrai os dados da produção agrupando por seção (ex: Produção Bibliográfica)
+def extract_sectioned_tables(name):
+    results = []
     try:
-        # Troca para o iframe
-        iframe = wait.until(
-            EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal"))
-        )
+        iframe = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal")))
         driver.switch_to.frame(iframe)
-
-        # Espera os gráficos carregarem (sumir "carregando...")
         wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "carregando-cont-indicadores")))
 
-        # Rola até o final para garantir que todas as tabelas aparecem
         last_height = 0
         while True:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -208,73 +240,19 @@ def extrair_tabelas_indicadores(nome_pessoa):
                 break
             last_height = new_height
 
-        # Coleta todas as tabelas (cada uma tem linhas <tr>)
-        tabelas = driver.find_elements(By.XPATH, "//table")
-        for tabela in tabelas:
-            linhas = tabela.find_elements(By.XPATH, ".//tr")
-            for linha in linhas:
-                colunas = linha.find_elements(By.XPATH, ".//td")
-                if len(colunas) >= 2:
-                    descricao = colunas[0].text.strip()
-                    total = colunas[-1].text.strip()
-                    if descricao and total:
-                        resultados.append([nome_pessoa, descricao, total])
-
-        # Salva tudo em CSV
-        with open("indicadores_producao.csv", "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Nome", "Categoria", "Total"])
-            writer.writerows(resultados)
-
-        print(f"{len(resultados)} registros extraídos e salvos em indicadores_producao.csv")
-
-    except Exception as e:
-        print(f"Erro ao extrair tabelas: {e}")
-
-    finally:
-        driver.switch_to.default_content()
-
-def extrair_tabelas_indicadores_com_secao(nome_pessoa):
-    resultados = []
-    try:
-        iframe = wait.until(
-            EC.presence_of_element_located((By.CLASS_NAME, "iframe-modal"))
-        )
-        driver.switch_to.frame(iframe)
-
-        wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "carregando-cont-indicadores")))
-
-        # Faz scroll para garantir que tudo carregue
-        last_height = 0
-        while True:
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1)
-            new_height = driver.execute_script("return document.body.scrollHeight")
-            if new_height == last_height:
-                break
-            last_height = new_height
-
-        # Captura todos os blocos .grafico
         blocos = driver.find_elements(By.CSS_SELECTOR, "div.grafico")
         print(f"Total de blocos encontrados: {len(blocos)}")
         for bloco in blocos:
             try:
-                # Scroll até o bloco para garantir que esteja visível
                 driver.execute_script("arguments[0].scrollIntoView(true);", bloco)
-                time.sleep(0.3)  # pequena pausa para garantir carregamento
-
-                # Título da seção
+                time.sleep(0.3)
                 try:
                     titulo_secao = bloco.find_element(By.TAG_NAME, "h2").text.strip()
                 except:
                     titulo_secao = "Seção Desconhecida"
-
-                print(titulo_secao)  # ou qualquer outro processamento
-
+                print(titulo_secao)
             except Exception as e:
                 print(f"Erro ao processar bloco: {e}")
-
-            # Agora captura TODAS as tabelas dentro do bloco
             tabelas = bloco.find_elements(By.CSS_SELECTOR, "table")
             for tabela in tabelas:
                 linhas = tabela.find_elements(By.XPATH, ".//tr")
@@ -284,108 +262,129 @@ def extrair_tabelas_indicadores_com_secao(nome_pessoa):
                         descricao = colunas[0].text.strip()
                         total = colunas[-1].text.strip()
                         if descricao and total:
-                            resultados.append([nome_pessoa, titulo_secao, descricao, total])
-
-        # Salva CSV com tudo
-        print(f"{len(resultados)} registros com seções extraídos. Para o nome: {nome_pessoa}")
-        return resultados
+                            results.append([name, titulo_secao, descricao, total])
+        print(f"{len(results)} registros com seções extraídos. Para o nome: {name}")
+        return results
     except Exception as e:
         print(f"Erro ao extrair tabelas com seções: {e}")
-
     finally:
         driver.switch_to.default_content()
 
+# === FUNÇÃO PARA SALVAR RESULTADOS EM CSV ===
 
-def make_csv(data, filename="produção.csv"):
+# Gera um CSV com os dados extraídos
+def generate_csv(data, filename="producao.csv"):
     with open(filename, mode="w", newline="", encoding="utf-8-sig") as file:
         writer = csv.writer(file)
-        
-        # Cabeçalho
         writer.writerow(["Nome", "Categoria", "Tipo", "Quantidade"])
-        
-        # Escreve os dados
         for group in data:
             for row in group:
                 writer.writerow(row)
-
     print(f"Arquivo '{filename}' gerado com sucesso!")
 
-def search(nomes, ano="Todos",  update_progresso=None): 
-    resultados = []
-    total = len(nomes)
-    for i, nome in enumerate(nomes, 1):
+
+def continue_search(name, year, progress_callback, i, total, index):
+    if click_result_by_index(index): 
+            results.append([[name, 'Usuario não encontrado', '', '']])
+            if progress_callback:
+                progress_callback(i, total)
+            return 1
+    click_production_indicators()
+    match select_year_filter(year):
+        case 1:
+            results.append([[name, 'Nenhuma produção encontrada', '', '']])
+            if progress_callback:
+                progress_callback(i, total)
+            return 1
+        case 2:    
+            results.append([[name, f'Não tem produções pós {year}', '', '']])
+            if progress_callback:
+                progress_callback(i, total)
+            return 1        
+    results.append(extract_sectioned_tables(name))
+    if progress_callback:
+        progress_callback(i, total)
+
+# === FLUXO DE BUSCA PARA LISTA DE NOMES ===
+results = []
+# Executa a automação completa para uma lista de nomes
+def run_search(name_list, year="Todos", progress_callback=None):
+    total = len(name_list)
+    for i, name in enumerate(name_list, 1):
         os.system('cls' if os.name == 'nt' else 'clear')
-        start()
-        searchAll()
-        insertName(nome)
-        click_search()
-        click_first_result()
-        click_indicadores_producao()
-        selecionar_ano(ano)
-        resultados.append(extrair_tabelas_indicadores_com_secao(nome))
-        if update_progresso:
-            update_progresso(i, total)
+        open_cnpq_homepage()
+        check_all_curricula()
+        enter_search_name(name)
+        click_search_button()
+        x = count_search_results()
+        print(f"Resultados encontrados para '{name}': {x}")
+        if x > 1:
+            for a in range(0,x):
+                if continue_search(name + f" ({a+ 1})", year, progress_callback, i, total, a) == 1:
+                    close_modal() 
+                    continue    
+                close_modal()
+        else:
+            if continue_search(name, year, progress_callback, i, total, 0) == 1:
+                continue    
+            # close_modal()
+    generate_csv(results)
 
-    make_csv(resultados)
+# === INTERFACE GRÁFICA (TKINTER) ===
 
+# Inicia a busca ao clicar no botão da interface
+# def start_gui_search():
+#     nomes_texto = entrada_nomes.get("1.0", tk.END).strip()
+#     nomes = [nome.strip() for nome in nomes_texto.split("\n") if nome.strip()]
+#     if not nomes:
+#         messagebox.showwarning("Aviso", "Insira ao menos um nome.")
+#         return
 
+#     ano = ano_var.get()
+#     status_label.config(text="Iniciando busca...")
+#     btn_iniciar.config(state=tk.DISABLED)
+#     progresso_bar["value"] = 0
+#     progresso_bar["maximum"] = len(nomes)
 
-def iniciar_busca():
-    nomes_texto = entrada_nomes.get("1.0", tk.END).strip()
-    nomes = [nome.strip() for nome in nomes_texto.split("\n") if nome.strip()]
-    
-    if not nomes:
-        messagebox.showwarning("Aviso", "Insira ao menos um nome.")
-        return
-    
-    ano = ano_var.get()
+#     def update_progress(current, total):
+#         progresso_bar["value"] = current
+#         status_label.config(text=f"Processando {current}/{total}...")
 
-    status_label.config(text="Iniciando busca...")
-    btn_iniciar.config(state=tk.DISABLED)
-    progresso_bar["value"] = 0
-    progresso_bar["maximum"] = len(nomes)
+#     def task():
+#         try:
+#             run_search(nomes, ano, progress_callback=update_progress)
+#             status_label.config(text="Busca finalizada com sucesso.")
+#         except Exception as e:
+#             messagebox.showerror("Erro", str(e))
+#             status_label.config(text="Erro durante a busca.")
+#         finally:
+#             btn_iniciar.config(state=tk.NORMAL)
 
-    def update_progresso(atual, total):
-        progresso_bar["value"] = atual
-        status_label.config(text=f"Processando {atual}/{total}...")
+#     Thread(target=task).start()
 
-    def tarefa():
-        try:
-            search(nomes, ano, update_progresso=update_progresso)
-            status_label.config(text="Busca finalizada com sucesso.")
-        except Exception as e:
-            messagebox.showerror("Erro", str(e))
-            status_label.config(text="Erro durante a busca.")
-        finally:
-            btn_iniciar.config(state=tk.NORMAL)
+# === CONSTRUÇÃO DA JANELA PRINCIPAL ===
 
-    Thread(target=tarefa).start()
+# janela = tk.Tk()
+# janela.title("Extrator CNPq - Produção Lattes")
+# janela.geometry("500x500")
 
-# Cria a janela principal
-janela = tk.Tk()
-janela.title("Extrator CNPq - Produção Lattes")
-janela.geometry("500x500")
+# tk.Label(janela, text="Digite os nomes (um por linha):").pack(pady=5)
+# entrada_nomes = scrolledtext.ScrolledText(janela, width=60, height=10)
+# entrada_nomes.pack()
 
-tk.Label(janela, text="Digite os nomes (um por linha):").pack(pady=5)
-entrada_nomes = scrolledtext.ScrolledText(janela, width=60, height=10)
-entrada_nomes.pack()
+# tk.Label(janela, text="Pesquisar as produções a partir do ano:").pack(pady=5)
+# ano_var = tk.StringVar(value="Todos")
+# anos_opcoes = ["Todos"] + [str(ano) for ano in range(int((datetime.datetime.now()).year)-1, 1998, -1)]
+# ano_menu = tk.OptionMenu(janela, ano_var, *anos_opcoes)
+# ano_menu.pack()
 
-tk.Label(janela, text="Pesquisar as produções a partir do ano:").pack(pady=5)
-ano_var = tk.StringVar(value="Todos")
-anos_opcoes = ["Todos"] + [str(ano) for ano in range(2024, 2000, -1)]
-ano_menu = tk.OptionMenu(janela, ano_var, *anos_opcoes)
-ano_menu.pack()
+# btn_iniciar = tk.Button(janela, text="Iniciar Extração", command=start_gui_search)
+# btn_iniciar.pack(pady=10)
 
-btn_iniciar = tk.Button(janela, text="Iniciar Extração", command=iniciar_busca)
-btn_iniciar.pack(pady=10)
+# progresso_bar = ttk.Progressbar(janela, orient="horizontal", length=400, mode="determinate")
+# progresso_bar.pack(pady=10)
 
-# Barra de progresso
-progresso_bar = ttk.Progressbar(janela, orient="horizontal", length=400, mode="determinate")
-progresso_bar.pack(pady=10)
+# status_label = tk.Label(janela, text="Aguardando...")
+# status_label.pack()
 
-# Status
-status_label = tk.Label(janela, text="Aguardando...")
-status_label.pack()
-
-janela.mainloop()
-
+# janela.mainloop()

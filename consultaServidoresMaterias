@@ -1,0 +1,276 @@
+import tkinter as tk
+from tkinter import ttk, scrolledtext, messagebox
+import datetime
+import csv
+import time
+import re
+import threading
+import consultaLattes as cl
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# ===============================
+# CONFIGURAÇÃO SELENIUM
+# ===============================
+def configurar_driver():
+    options = webdriver.ChromeOptions()
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument("--start-maximized")
+    # options.add_argument('--headless')  # descomente se quiser rodar em background
+    options.add_argument('user-agent=Mozilla/5.0')
+    return webdriver.Chrome(options=options)
+
+
+# ===============================
+# FUNÇÕES DE NAVEGAÇÃO
+# ===============================
+def abrir_busca_docente(driver):
+    driver.get("https://sig.ifc.edu.br/sigaa/public/docente/busca_docentes.jsf")
+
+def buscar_docente(driver, nome):
+    try:
+        campo_nome = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.NAME, "form:nome"))
+        )
+        campo_nome.clear()
+        campo_nome.send_keys(nome)
+        campo_nome.send_keys(Keys.RETURN)
+        return True
+    except:
+        return False
+
+
+def abrir_pagina_publica(driver):
+    try:
+        link = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.LINK_TEXT, "ver página pública"))
+        )
+        link.click()
+        return True
+    except:
+        return False
+
+
+def abrir_disciplinas(driver):
+    try:
+        link_disciplinas = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.LINK_TEXT, "Disciplinas Ministradas"))
+        )
+        link_disciplinas.click()
+        return True
+    except:
+        return False
+
+# ===============================
+# FUNÇÃO LATTES (IMPORTADA)
+# ===============================
+def lattesGetTitle(nome):
+    cl.open_cnpq_homepage()
+    cl.check_all_curricula()
+    cl.enter_search_name(nome)
+    cl.click_search_button()
+    if cl.count_search_results() == 1:
+        cl.click_result_by_index(0)
+        cl.click_search_groups()
+        cl.driver.quit()
+        return cl.get_curriculum_title()
+    else:    
+        cl.click_result_by_index(0)
+        cl.click_search_groups()
+        cl.driver.quit()  # Fecha o driver para evitar múltiplas janelas abertas
+        return cl.get_curriculum_title() + " (vários resultados)"
+
+
+# ===============================
+# EXTRAÇÃO DAS DISCIPLINAS
+# ===============================
+def extrair_disciplinas_docente(driver, abas_desejadas=None):
+    if abas_desejadas is None:
+        abas_desejadas = ["Integrado", "Técnico", "Graduação", "Pós-Graduação"]
+
+    disciplinas = []
+
+    for nome_aba in abas_desejadas:
+        try:
+            aba = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, f"//span[contains(@class, 'x-tab-strip-text') and contains(text(), '{nome_aba}')]"))
+            )
+            driver.execute_script("arguments[0].click();", aba)
+            time.sleep(0.5)
+
+            vazio = driver.find_elements(By.CSS_SELECTOR, "p.vazio")
+            if vazio and any("Nenhuma turma encontrada" in el.text.strip() for el in vazio):
+                continue
+
+            linhas = driver.find_elements(By.CSS_SELECTOR, "#disciplinas-docente tbody tr")
+            semestre_atual = ""
+
+            for linha in linhas:
+                td_ano = linha.find_elements(By.CSS_SELECTOR, "td.anoPeriodo")
+                if td_ano:
+                    semestre_texto = td_ano[0].text.strip()
+                    # Mantém todos os formatos possíveis
+                    match = re.search(r"\d{4}(\.\d)?", semestre_texto)
+                    if match:
+                        semestre_atual = match.group()
+                    else:
+                        semestre_atual = semestre_texto
+                    continue
+
+                try:
+                    codigo = linha.find_element(By.CSS_SELECTOR, "td.codigo").text.strip()
+                    nome_disc = linha.find_element(By.CSS_SELECTOR, "td a").text.strip()
+
+                    disciplinas.append({
+                        "Nivel": nome_aba,
+                        "Semestre": semestre_atual,
+                        "Código": codigo,
+                        "Disciplina": nome_disc
+                    })
+                except:
+                    continue
+
+        except:
+            continue
+
+    return disciplinas
+
+
+# ===============================
+# PROCESSAMENTO DE UM DOCENTE
+# ===============================
+def processar_docente(nome, anos_selecionados=None):
+    driver = configurar_driver()
+    resultados = []
+    try:
+        abrir_busca_docente(driver)
+        if not buscar_docente(driver, nome):
+            return [{"Nome do Docente": nome, "Nivel": "", "Semestre": "", "Código": "", "Disciplina": "", "Status": "Erro"}]
+
+        if not abrir_pagina_publica(driver):
+            return [{"Nome do Docente": nome, "Nivel": "", "Semestre": "", "Código": "", "Disciplina": "", "Status": "Não encontrado"}]
+
+        if not abrir_disciplinas(driver):
+            return [{"Nome do Docente": nome, "Nivel": "", "Semestre": "", "Código": "", "Disciplina": "", "Status": "Sem disciplinas"}]
+
+        
+        disciplinas = extrair_disciplinas_docente(driver)
+        disciplinas = [d for d in disciplinas if d["Código"] and d["Disciplina"]]
+
+        if anos_selecionados:
+            # Mantém apenas os anos selecionados
+            disciplinas = [d for d in disciplinas if any(d["Semestre"].startswith(str(ano)) for ano in anos_selecionados)]
+        
+        titulo_lattes = lattesGetTitle(nome)
+
+        for d in disciplinas:
+            resultados.append({
+                "Nome do Docente": nome,
+                "Titulação": titulo_lattes,
+                "Nivel": d["Nivel"],
+                "Semestre": d["Semestre"],
+                "Código": d["Código"],
+                "Disciplina": d["Disciplina"],
+                "Status": "Encontrado"
+            })
+
+        if not resultados:
+            resultados.append({
+                "Nome do Docente": nome,
+                "Titulação": titulo_lattes,
+                "Nivel": "",
+                "Semestre": "",
+                "Código": "",
+                "Disciplina": "",
+                "Status": "Sem disciplinas"
+            })
+    finally:
+        driver.quit()
+
+    return resultados
+
+
+# ===============================
+# SALVAR EM CSV
+# ===============================
+def salvar_csv(resultados, nome_arquivo="docentes_disciplinas.csv"):
+    with open(nome_arquivo, mode="w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["Nome do Docente", "Titulação" ,"Nivel", "Semestre", "Código", "Disciplina", "Status"])
+        writer.writeheader()
+        writer.writerows(resultados)
+
+
+# ===============================
+# FUNÇÃO PARA RODAR EM THREAD
+# ===============================
+def start_threaded_search():
+    threading.Thread(target=start_gui_search).start()
+
+
+# ===============================
+# INTEGRAÇÃO COM TKINTER
+# ===============================
+def start_gui_search():
+    nomes = entrada_nomes.get("1.0", tk.END).strip().split("\n")
+    anos_selecionados = [anos_listbox.get(i) for i in anos_listbox.curselection()]
+
+    if not nomes or nomes == [""]:
+        messagebox.showwarning("Aviso", "Digite pelo menos um nome!")
+        return
+
+    if "Todos" in anos_selecionados:
+        anos_selecionados = None
+    else:
+        anos_selecionados = [str(a) for a in anos_selecionados]  # mantem como string
+
+    resultados_finais = []
+    progresso_bar["maximum"] = len(nomes)
+
+    for idx, nome in enumerate(nomes, start=1):
+        status_label.config(text=f"🔍 Processando: {nome} ({idx}/{len(nomes)})")
+        janela.update_idletasks()
+
+        res = processar_docente(nome, anos_selecionados)
+        resultados_finais.extend(res)
+
+        progresso_bar["value"] = idx
+        janela.update_idletasks()
+
+    salvar_csv(resultados_finais)
+    status_label.config(text="✅ Extração concluída! Resultados salvos em 'docentes_disciplinas.csv'")
+    messagebox.showinfo("Concluído", "Extração finalizada com sucesso!")
+
+
+# ===============================
+# INTERFACE
+# ===============================
+janela = tk.Tk()
+janela.title("Extrator SIGAA - Disciplinas")
+janela.geometry("600x600")
+
+tk.Label(janela, text="Digite os nomes (um por linha):").pack(pady=5)
+entrada_nomes = scrolledtext.ScrolledText(janela, width=70, height=10)
+entrada_nomes.pack()
+
+tk.Label(janela, text="Selecionar anos:").pack(pady=5)
+
+anos = ["Todos"] + [str(ano) for ano in range(datetime.datetime.now().year, 1999, -1)]
+anos_listbox = tk.Listbox(janela, selectmode="multiple", height=10, width=20, exportselection=False)
+for ano in anos:
+    anos_listbox.insert(tk.END, ano)
+anos_listbox.pack()
+
+btn_iniciar = tk.Button(janela, text="Iniciar Extração", command=start_threaded_search)
+btn_iniciar.pack(pady=10)
+
+progresso_bar = ttk.Progressbar(janela, orient="horizontal", length=400, mode="determinate")
+progresso_bar.pack(pady=10)
+
+status_label = tk.Label(janela, text="Aguardando...")
+status_label.pack()
+
+janela.mainloop()
